@@ -34,6 +34,18 @@ pi install -l /absolute/path/to/pi-ducky
 
 Pi will add the package to `.pi/settings.json` for that project.
 
+## Other Recommended Pi Plugins to use with Ducky
+
+* pi-usage
+* pi-markdown-preview
+* pi-mcp-adapter
+* pi-simplify
+* pi-web-access
+
+## Recommended Model
+
+gpt-5.5
+
 ## Usage
 
 Ducky is enabled by default. When the agent attempts an edit, you will see a prompt like:
