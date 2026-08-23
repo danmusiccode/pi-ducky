@@ -1,0 +1,48 @@
+{
+  "name": "pi-ducky",
+  "version": "0.1.0",
+  "description": "Hands on the wheel AI coding with Pi. Review small changes incrementally, edit inline, approve or request changes. Asks for your opinion as it designs.",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "approval",
+    "hitl",
+    "human-in-the-loop",
+    "request-changes",
+    "manually-approve-edits"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "*",
+    "typebox": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
