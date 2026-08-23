@@ -1,19 +1,12 @@
 # pi-ducky
 
-Hands-on edit approval for [Pi](https://pi.dev): Ducky pauses every `edit` and `write` tool call, shows a small digest of the proposed changes, and asks you to reply `yes` or `no` with optional notes.
+Hands-on collaborative AI workflow with approvals for the [Pi](https://pi.dev) coding harness.
 
-The design goal is **you stay at the wheel**. The agent does the typing, but you approve each digestible change set before it lands.
+Ducky pauses every `edit` and `write` tool call, explains the proposed changes, shows the diff with inline editing, and you can either approve it or ask for changes.
 
-## Features
+Continuous planning: When Ducky is trying to make an important design decision or needs clarification, it pauses and presents you with options to discuss.
 
-- 🦆 **Approval before edits** — intercepts Pi's built-in `edit` and `write` tools.
-- 🧾 **Small change digest** — shows file path, replacement count, line counts, and a compact old/new preview.
-- 💬 **Yes/no with context** — type `yes`, `no`, or add instructions after either response.
-- 🔁 **Feedback loop** — rejected edits are returned to the agent with your feedback so it can try again.
-- 🧭 **Active-driver prompt** — nudges the model to make smaller, reviewable edit calls.
-- ⚙️ **Toggle command** — `/ducky on`, `/ducky off`, `/ducky status`.
-- 💾 **Session persistence** — enabled/disabled state survives reload/resume through Pi session entries.
-- 🦆 **Rubber-ducky questions** — adds `ducky_ask_user`, a tool the agent uses when requirements or design decisions are unclear.
+The design goal is an AI coding workflow that is iterative and human-led. The agent does the typing for you but relies on you for the design.
 
 ## Installation
 
@@ -22,13 +15,13 @@ The design goal is **you stay at the wheel**. The agent does the typing, but you
 From this repo's parent directory:
 
 ```bash
-pi -e ./pi-ducky/src/index.ts
+pi install ./pi-ducky
 ```
 
-Or install as a local Pi package:
+Or run as a one-time trial:
 
 ```bash
-pi install ./pi-ducky
+pi -e ./pi-ducky/src/index.ts
 ```
 
 ### Project-local install
@@ -45,40 +38,21 @@ Pi will add the package to `.pi/settings.json` for that project.
 
 Ducky is enabled by default. When the agent attempts an edit, you will see a prompt like:
 
-```text
-🦆 Ducky wants approval for edit
-
-Edit file: src/app.ts
-Replacement count: 1
-
-Change 1: replace 3 line(s) with 5 line(s)
-- old (...)
-+ new (...)
-
-Reply with:
-  yes [optional note]  — approve this exact change
-  no  [feedback]       — reject and tell the agent what to change
 ```
+🦆 Adds a README section explaining the value of manual approvals before the existing Features section.                   
 
-Example replies:
-
-```text
-yes
-```
-
-```text
-no make this a smaller focused change first
-```
-
-```text
-yes but after this also update the tests
+─── ↑ 24 more ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
++ - Here's a change in the diff                                            
++ - Another proposed change                                                                                                              
+──────────────── Yay or nay? Press enter or ask for changes ────────────────────                                           
+Your feedback: [Your Response Goes Here]
 ```
 
 If you approve with a note, Ducky lets the edit run and sends the note back as steering for the next step. If you reject, Ducky blocks the tool call and includes your feedback in the tool result so the agent can revise.
 
 ## Rubber-ducky questions
 
-Ducky also registers a tool named `ducky_ask_user`. The system prompt tells the agent to use it when it catches itself making a meaningful assumption, for example:
+Ducky registers a tool named `ducky_ask_user`. The system prompt tells the agent to use it when it catches itself making a meaningful assumption, for example:
 
 - choosing CDN vs npm dependency
 - selecting an architecture or migration strategy
@@ -86,7 +60,7 @@ Ducky also registers a tool named `ducky_ask_user`. The system prompt tells the 
 - deciding whether compatibility matters
 - interpreting vague requirements
 
-The question opens in an editor with context and optional choices. Fill in the `ANSWER:` line and the agent receives your guidance before continuing.
+The question opens in an editor with context and optional choices. Fill in the `ANSWER:` line and the agent takes your guidance into account before continuing.
 
 ## Commands
 
@@ -96,34 +70,10 @@ The question opens in an editor with context and optional choices. Fill in the `
 /ducky off      Disable approval prompts for this session
 ```
 
-Keyboard shortcut:
+Keyboard shortcuts:
 
 ```text
 F6    Toggle Ducky approval mode on/off
-```
-
-## Package shape
-
-This follows common Pi package conventions:
-
-```json
-{
-  "keywords": ["pi-package", "pi-extension"],
-  "pi": {
-    "extensions": ["./src/index.ts"]
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  }
-}
-```
-
-Runtime code lives in `src/index.ts` and exports the standard Pi extension factory:
-
-```ts
-export default function ducky(pi: ExtensionAPI): void {
-  // register commands and event hooks
-}
 ```
 
 ## License
