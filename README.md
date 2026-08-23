@@ -62,7 +62,7 @@ Your feedback: [Your Response Goes Here]
 
 If you approve with a note, Ducky lets the edit run and sends the note back as steering for the next step. If you reject, Ducky blocks the tool call and includes your feedback in the tool result so the agent can revise.
 
-## Rubber-ducky questions
+## Rubber Ducky questions
 
 Ducky registers a tool named `ducky_ask_user`. The system prompt tells the agent to use it when it catches itself making a meaningful assumption, for example:
 
