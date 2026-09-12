@@ -40,7 +40,8 @@ Pi will add the package to `.pi/settings.json` for that project.
 * pi-markdown-preview
 * pi-mcp-adapter
 * pi-simplify
-* pi-web-access
+* pi-web-search
+* pi-codex-goal
 
 ## Recommended Model
 
