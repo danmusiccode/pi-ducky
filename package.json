@@ -1,6 +1,6 @@
 {
   "name": "pi-ducky",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hands on the wheel AI coding with Pi. Review small changes incrementally, edit inline, approve or request changes. Asks for your opinion as it designs.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
