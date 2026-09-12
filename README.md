@@ -48,7 +48,7 @@ gpt-5.5
 
 ## Usage
 
-Ducky is enabled by default. When the agent attempts an edit, you will see a prompt like:
+Ducky starts in the last mode you selected. The first run defaults to edit approvals. When the agent attempts an edit, you will see a prompt like:
 
 ```
 🦆 Adds a README section explaining the value of manual approvals before the existing Features section.                   
@@ -62,7 +62,9 @@ Your feedback: [Your Response Goes Here]
 
 If you approve with a note, Ducky lets the edit run and sends the note back as steering for the next step. If you reject, Ducky blocks the tool call and includes your feedback in the tool result so the agent can revise.
 
-## Safe command configuration
+## Settings
+
+Ducky stores the last selected approval mode in `~/.pi/agent/settings.json` and starts in that mode the next time you open Pi.
 
 Safe mode automatically allows simple read-only commands like `pwd`, `cd`, `ls`, `find`, `fd`, `rg`, `grep`, `sort`, `sed`, `cut`, `uniq`, read-only `git` inspection commands, and file viewing commands such as `cat`, `head`, `tail`, `wc`, `stat`, `file`, `du`, and `df`. Chained and piped commands are only auto-approved when each `&&`- or `|`-separated command is safe; commands with shell control operators, redirection, `find -delete`/`find -exec`, or in-place edit flags like `sed -i` still ask for approval.
 

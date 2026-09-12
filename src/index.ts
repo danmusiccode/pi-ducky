@@ -25,6 +25,7 @@ interface EditReplacement {
 
 interface DuckySettings {
 	ducky?: {
+		mode?: unknown;
 		safeCommands?: unknown;
 	};
 	duckySafeCommands?: unknown;
@@ -85,12 +86,31 @@ type AskUserInput = {
 	options?: string[];
 };
 
+function isApprovalMode(value: unknown): value is ApprovalMode {
+	return value === "off" || value === "edits" || value === "safe";
+}
+
+function settingsPath(): string {
+	return path.join(getAgentDir(), "settings.json");
+}
+
+function readDuckySettings(): DuckySettings {
+	try {
+		return JSON.parse(fs.readFileSync(settingsPath(), "utf8")) as DuckySettings;
+	} catch {
+		return {};
+	}
+}
+
 function restoreMode(ctx: ExtensionContext, fallback: ApprovalMode): ApprovalMode {
+	const settingsMode = readDuckySettings().ducky?.mode;
+	if (isApprovalMode(settingsMode)) return settingsMode;
+
 	const entries = ctx.sessionManager.getEntries();
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index] as { type?: string; customType?: string; data?: DuckyState };
 		if (entry.type !== "custom" || entry.customType !== STATE_ENTRY) continue;
-		if (entry.data?.mode === "off" || entry.data?.mode === "edits" || entry.data?.mode === "safe") return entry.data.mode;
+		if (isApprovalMode(entry.data?.mode)) return entry.data.mode;
 		if (typeof entry.data?.enabled === "boolean") return entry.data.enabled ? "edits" : "off";
 	}
 	return fallback;
@@ -115,6 +135,10 @@ function setStatus(ctx: ExtensionContext, mode: ApprovalMode): void {
 
 function persist(pi: ExtensionAPI, mode: ApprovalMode): void {
 	pi.appendEntry(STATE_ENTRY, { mode, enabled: mode !== "off", timestamp: Date.now() });
+	const settings = readDuckySettings();
+	settings.ducky = { ...settings.ducky, mode };
+	fs.mkdirSync(getAgentDir(), { recursive: true });
+	fs.writeFileSync(settingsPath(), `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 function lineCount(text: string): number {
@@ -185,7 +209,7 @@ function extractSafeCommands(value: unknown): string[] {
 
 function loadConfiguredSafeCommands(): string[] {
 	try {
-		const settings = JSON.parse(fs.readFileSync(path.join(getAgentDir(), "settings.json"), "utf8")) as DuckySettings;
+		const settings = readDuckySettings();
 		return [
 			...extractSafeCommands(settings.ducky?.safeCommands),
 			...extractSafeCommands(settings.duckySafeCommands),
