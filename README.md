@@ -2,7 +2,7 @@
 
 Hands-on collaborative AI workflow with approvals for the [Pi](https://pi.dev) coding harness.
 
-Ducky pauses every `edit` and `write` tool call, explains the proposed changes, shows the diff with inline editing, and you can either approve it or ask for changes.
+Ducky pauses every `edit` and `write` tool call, explains the proposed changes, shows the diff with inline editing, and you can either approve it, edit inline, or ask for changes. In safe mode, Ducky explains each bash command and asks for your approval.
 
 Continuous planning: When Ducky is trying to make an important design decision or needs clarification, it pauses and presents you with options to discuss.
 
@@ -77,15 +77,16 @@ The question opens in an editor with context and optional choices. Fill in the `
 ## Commands
 
 ```text
-/ducky status   Show current state
-/ducky on       Enable approval prompts
+/ducky status   Show current mode
+/ducky on       Approve edits and writes
+/ducky safe     Approve edits, writes, and commands
 /ducky off      Disable approval prompts for this session
 ```
 
 Keyboard shortcuts:
 
 ```text
-F6    Toggle Ducky approval mode on/off
+F6    Cycle Ducky approval modes: off → edits → safe
 ```
 
 ## License
@@ -94,6 +95,6 @@ This project is source-available under the terms in [LICENSE](LICENSE). You may 
 
 ## Notes
 
-- In non-interactive modes with no UI, Ducky blocks `edit`/`write` calls by default because it cannot ask for approval.
+- In non-interactive modes with no UI, Ducky blocks `edit`/`write` calls by default because it cannot ask for approval. Commands are also blocked when safe mode is active.
 - Ducky does not intercept read-only tools.
 - Ducky intentionally favors smaller edits. Large edits are shown in a scrollable approval editor so you can review the full change.

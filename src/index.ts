@@ -11,8 +11,11 @@ type Decision =
 	| { action: "deny"; feedback?: string }
 	| { action: "cancel"; feedback?: string };
 
+type ApprovalMode = "off" | "edits" | "safe";
+
 interface DuckyState {
 	enabled?: boolean;
+	mode?: ApprovalMode;
 }
 
 interface EditReplacement {
@@ -42,24 +45,36 @@ type AskUserInput = {
 	options?: string[];
 };
 
-function restoreEnabled(ctx: ExtensionContext, fallback: boolean): boolean {
+function restoreMode(ctx: ExtensionContext, fallback: ApprovalMode): ApprovalMode {
 	const entries = ctx.sessionManager.getEntries();
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index] as { type?: string; customType?: string; data?: DuckyState };
-		if (entry.type === "custom" && entry.customType === STATE_ENTRY && typeof entry.data?.enabled === "boolean") {
-			return entry.data.enabled;
-		}
+		if (entry.type !== "custom" || entry.customType !== STATE_ENTRY) continue;
+		if (entry.data?.mode === "off" || entry.data?.mode === "edits" || entry.data?.mode === "safe") return entry.data.mode;
+		if (typeof entry.data?.enabled === "boolean") return entry.data.enabled ? "edits" : "off";
 	}
 	return fallback;
 }
 
-function setStatus(ctx: ExtensionContext, enabled: boolean): void {
-	if (!ctx.hasUI) return;
-	ctx.ui.setStatus(STATUS_KEY, enabled ? ctx.ui.theme.fg("accent", "🦆 approval") : undefined);
+function modeLabel(mode: ApprovalMode): string {
+	if (mode === "edits") return "approve edits";
+	if (mode === "safe") return "approve edits & commands";
+	return "approval off";
 }
 
-function persist(pi: ExtensionAPI, enabled: boolean): void {
-	pi.appendEntry(STATE_ENTRY, { enabled, timestamp: Date.now() });
+function statusLabel(mode: ApprovalMode): string {
+	if (mode === "edits") return "edits";
+	if (mode === "safe") return "safe";
+	return "off";
+}
+
+function setStatus(ctx: ExtensionContext, mode: ApprovalMode): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.setStatus(STATUS_KEY, mode === "off" ? undefined : ctx.ui.theme.fg("accent", `🦆 ${statusLabel(mode)}`));
+}
+
+function persist(pi: ExtensionAPI, mode: ApprovalMode): void {
+	pi.appendEntry(STATE_ENTRY, { mode, enabled: mode !== "off", timestamp: Date.now() });
 }
 
 function lineCount(text: string): number {
@@ -106,6 +121,16 @@ function summarizeWrite(cwd: string, filePath: string, content: string): string 
 	return parts.join("\n");
 }
 
+function summarizeCommand(input: any): string {
+	const command = String(input?.command ?? "");
+	const timeout = input?.timeout === undefined ? undefined : String(input.timeout);
+	return [
+		"Command",
+		timeout ? `Timeout: ${timeout}s` : undefined,
+		...formatBlock("command", command, "+"),
+	].filter((line): line is string => line !== undefined).join("\n");
+}
+
 function buildDigest(cwd: string, toolName: string, input: any): string | undefined {
 	if (toolName === "edit") {
 		const filePath = String(input?.path ?? input?.file_path ?? "unknown");
@@ -120,6 +145,8 @@ function buildDigest(cwd: string, toolName: string, input: any): string | undefi
 		const content = String(input?.content ?? "");
 		return summarizeWrite(cwd, filePath, content);
 	}
+
+	if (toolName === "bash") return summarizeCommand(input);
 
 	return undefined;
 }
@@ -236,6 +263,57 @@ async function askForApproval(ctx: ExtensionContext, toolName: string, digest: s
 	return parseApprovalDocument(reply);
 }
 
+function commandSummary(digest: string): string {
+	const lines = digest.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+	return lines[0] ?? "Review command";
+}
+
+async function explainCommand(ctx: ExtensionContext, digest: string): Promise<string> {
+	const fallback = commandSummary(digest);
+	if (!ctx.model) return fallback;
+
+	try {
+		const message = await ctx.modelRegistry.complete(
+			ctx.model as any,
+			{
+				systemPrompt:
+					"You explain proposed commands for user approval. Return one short, plain-English sentence under 25 words. Do not say approve, deny, yes, or no.",
+				messages: [
+					{
+						role: "user",
+						content: `Proposed command digest:\n${truncateForModel(digest)}`,
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ signal: ctx.signal } as any,
+		);
+		return cleanExplanation(assistantText(message), fallback);
+	} catch {
+		return fallback;
+	}
+}
+
+async function askForCommandApproval(ctx: ExtensionContext, digest: string): Promise<Decision> {
+	if (!ctx.hasUI) {
+		return { action: "deny", feedback: "Ducky requires interactive approval, but this Pi mode has no UI." };
+	}
+
+	const explanation = await explainCommand(ctx, digest);
+	const reviewDocument = [
+		"Ducky wants to run the following command:",
+		`🦆 ${explanation}`,
+		"",
+		"──────────────── proposed command ────────────────",
+		digest,
+		"──────────────── Yay or nay? Press enter or ask for changes ────────────────────",
+		"Your feedback: ",
+	].join("\n");
+
+	const reply = await ctx.ui.editor(`🦆 ${explanation}`, reviewDocument);
+	return parseApprovalDocument(reply);
+}
+
 async function askRubberDucky(ctx: ExtensionContext, params: AskUserInput): Promise<string> {
 	if (!ctx.hasUI) {
 		return "No interactive UI is available. Make the smallest reversible choice, state the assumption clearly, and continue.";
@@ -265,17 +343,18 @@ async function askRubberDucky(ctx: ExtensionContext, params: AskUserInput): Prom
 }
 
 export default function ducky(pi: ExtensionAPI): void {
-	let enabled = true;
+	let approvalMode: ApprovalMode = "edits";
 
-	function applyEnabled(ctx: ExtensionContext, value: boolean): void {
-		enabled = value;
-		persist(pi, enabled);
-		setStatus(ctx, enabled);
-		ctx.ui.notify(`Ducky approval ${enabled ? "enabled" : "disabled"}.`, "info");
+	function applyMode(ctx: ExtensionContext, nextMode: ApprovalMode): void {
+		approvalMode = nextMode;
+		persist(pi, approvalMode);
+		setStatus(ctx, approvalMode);
+		ctx.ui.notify(`Ducky mode: ${modeLabel(approvalMode)}.`, "info");
 	}
 
-	function toggleEnabled(ctx: ExtensionContext): void {
-		applyEnabled(ctx, !enabled);
+	function cycleMode(ctx: ExtensionContext): void {
+		const nextMode = approvalMode === "off" ? "edits" : approvalMode === "edits" ? "safe" : "off";
+		applyMode(ctx, nextMode);
 	}
 
 	pi.registerTool({
@@ -291,10 +370,10 @@ export default function ducky(pi: ExtensionAPI): void {
 		],
 		parameters: askUserSchema,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!enabled) {
+			if (approvalMode === "off") {
 				return {
 					content: [{ type: "text", text: "Ducky is disabled. Continue with your best judgment." }],
-					details: { enabled: false },
+					details: { enabled: false, mode: approvalMode },
 				};
 			}
 
@@ -307,32 +386,33 @@ export default function ducky(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("ducky", {
-		description: "Toggle or inspect Ducky edit approval (/ducky on|off|status)",
+		description: "Set or inspect Ducky approval mode (/ducky on|off|safe|status)",
 		handler: async (args, ctx) => {
-			const mode = args.trim().toLowerCase();
-			if (mode === "off" || mode === "disable" || mode === "disabled") applyEnabled(ctx, false);
-			else if (mode === "on" || mode === "enable" || mode === "enabled") applyEnabled(ctx, true);
-			else if (mode === "status" || mode === "") {
-				ctx.ui.notify(`Ducky approval is ${enabled ? "on" : "off"}.`, "info");
-				setStatus(ctx, enabled);
+			const requestedMode = args.trim().toLowerCase();
+			if (requestedMode === "off" || requestedMode === "disable" || requestedMode === "disabled") applyMode(ctx, "off");
+			else if (requestedMode === "on" || requestedMode === "enable" || requestedMode === "enabled" || requestedMode === "edits") applyMode(ctx, "edits");
+			else if (requestedMode === "safe" || requestedMode === "commands") applyMode(ctx, "safe");
+			else if (requestedMode === "status" || requestedMode === "") {
+				ctx.ui.notify(`Ducky mode: ${modeLabel(approvalMode)}.`, "info");
+				setStatus(ctx, approvalMode);
 			} else {
-				ctx.ui.notify("Usage: /ducky [on|off|status]", "warning");
+				ctx.ui.notify("Usage: /ducky [on|off|safe|status]", "warning");
 			}
 		},
 	});
 
 	pi.registerShortcut("f6", {
-		description: "Toggle Ducky approval mode",
-		handler: async (ctx) => toggleEnabled(ctx),
+		description: "Cycle Ducky approval mode",
+		handler: async (ctx) => cycleMode(ctx),
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		enabled = restoreEnabled(ctx, enabled);
-		setStatus(ctx, enabled);
+		approvalMode = restoreMode(ctx, approvalMode);
+		setStatus(ctx, approvalMode);
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		if (!enabled) return;
+		if (approvalMode === "off") return;
 		return {
 			systemPrompt:
 				event.systemPrompt +
@@ -341,13 +421,16 @@ export default function ducky(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (!enabled) return;
-		if (event.toolName !== "edit" && event.toolName !== "write") return;
+		if (approvalMode === "off") return;
+		if (event.toolName === "bash" && approvalMode !== "safe") return;
+		if (event.toolName !== "edit" && event.toolName !== "write" && event.toolName !== "bash") return;
 
 		const digest = buildDigest(ctx.cwd, event.toolName, event.input);
 		if (!digest) return;
 
-		const decision = await askForApproval(ctx, event.toolName, digest);
+		const decision = event.toolName === "bash"
+			? await askForCommandApproval(ctx, digest)
+			: await askForApproval(ctx, event.toolName, digest);
 		if (decision.action === "approve") {
 			if (decision.note) {
 				pi.sendUserMessage(`Ducky approval note for the next step: ${decision.note}`, { deliverAs: "steer" });
