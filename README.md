@@ -2,7 +2,7 @@
 
 Hands-on collaborative AI workflow with approvals for the [Pi](https://pi.dev) coding harness.
 
-Ducky pauses every `edit` and `write` tool call, explains the proposed changes, shows the diff with inline editing, and you can either approve it, edit inline, or ask for changes. In safe mode, Ducky explains each bash command and asks for your approval.
+Ducky pauses every `edit` and `write` tool call, explains the proposed changes, shows the diff with inline editing, and you can either approve it, edit inline, or ask for changes. In safe mode, Ducky asks before running commands except for read-only shell commands such as directory navigation and searches.
 
 Continuous planning: When Ducky is trying to make an important design decision or needs clarification, it pauses and presents you with options to discuss.
 
@@ -49,7 +49,7 @@ gpt-5.5
 
 ## Usage
 
-Ducky is enabled by default. When the agent attempts an edit, you will see a prompt like:
+Ducky starts in the last mode you selected. The first run defaults to edit approvals. When the agent attempts an edit, you will see a prompt like:
 
 ```
 🦆 Adds a README section explaining the value of manual approvals before the existing Features section.                   
@@ -62,6 +62,27 @@ Your feedback: [Your Response Goes Here]
 ```
 
 If you approve with a note, Ducky lets the edit run and sends the note back as steering for the next step. If you reject, Ducky blocks the tool call and includes your feedback in the tool result so the agent can revise.
+
+## Settings
+
+Ducky stores the last selected approval mode in `~/.pi/agent/settings.json` and starts in that mode the next time you open Pi.
+
+Safe mode automatically allows simple read-only commands like `pwd`, `cd`, `ls`, `find`, `fd`, `rg`, `grep`, `sort`, `sed`, `cut`, `uniq`, read-only `git` inspection commands, and file viewing commands such as `cat`, `head`, `tail`, `wc`, `stat`, `file`, `du`, and `df`. Chained and piped commands are only auto-approved when each `&&`- or `|`-separated command is safe; commands with shell control operators, redirection, `find -delete`/`find -exec`, or in-place edit flags like `sed -i` still ask for approval.
+
+Add your own command prefixes in `~/.pi/agent/settings.json`:
+
+```json
+{
+  "ducky": {
+    "safeCommands": [
+      "npm test",
+      "pnpm typecheck"
+    ]
+  }
+}
+```
+
+A configured entry matches the exact command or the same command with additional arguments, so `"npm test"` also allows `npm test -- --watch=false`.
 
 ## Rubber Ducky questions
 
@@ -96,6 +117,6 @@ This project is source-available under the terms in [LICENSE](LICENSE). You may 
 
 ## Notes
 
-- In non-interactive modes with no UI, Ducky blocks `edit`/`write` calls by default because it cannot ask for approval. Commands are also blocked when safe mode is active.
+- In non-interactive modes with no UI, Ducky blocks `edit`/`write` calls by default because it cannot ask for approval. Commands are also blocked when safe mode is active unless they match a safe command.
 - Ducky does not intercept read-only tools.
 - Ducky intentionally favors smaller edits. Large edits are shown in a scrollable approval editor so you can review the full change.

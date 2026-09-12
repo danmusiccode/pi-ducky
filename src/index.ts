@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -23,6 +23,47 @@ interface EditReplacement {
 	newText?: string;
 }
 
+interface DuckySettings {
+	ducky?: {
+		mode?: unknown;
+		safeCommands?: unknown;
+	};
+	duckySafeCommands?: unknown;
+}
+
+const defaultSafeCommands = [
+	"pwd",
+	"cd",
+	"ls",
+	"tree",
+	"find",
+	"fd",
+	"rg",
+	"grep",
+	"sort",
+	"sed",
+	"cut",
+	"uniq",
+	"git status",
+	"git diff",
+	"git log",
+	"git show",
+	"git branch",
+	"git rev-parse",
+	"git ls-files",
+	"git grep",
+	"cat",
+	"head",
+	"tail",
+	"wc",
+	"stat",
+	"file",
+	"du",
+	"df",
+] as const;
+
+const forbiddenSafeCommandTokens = /(^|\s)(-delete|-exec|-execdir|-i|-i\.\S+|--in-place)(\s|$)/;
+
 const askUserSchema = Type.Object({
 	question: Type.String({
 		description: "The specific decision, requirement, or ambiguity to ask the user about.",
@@ -45,12 +86,31 @@ type AskUserInput = {
 	options?: string[];
 };
 
+function isApprovalMode(value: unknown): value is ApprovalMode {
+	return value === "off" || value === "edits" || value === "safe";
+}
+
+function settingsPath(): string {
+	return path.join(getAgentDir(), "settings.json");
+}
+
+function readDuckySettings(): DuckySettings {
+	try {
+		return JSON.parse(fs.readFileSync(settingsPath(), "utf8")) as DuckySettings;
+	} catch {
+		return {};
+	}
+}
+
 function restoreMode(ctx: ExtensionContext, fallback: ApprovalMode): ApprovalMode {
+	const settingsMode = readDuckySettings().ducky?.mode;
+	if (isApprovalMode(settingsMode)) return settingsMode;
+
 	const entries = ctx.sessionManager.getEntries();
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index] as { type?: string; customType?: string; data?: DuckyState };
 		if (entry.type !== "custom" || entry.customType !== STATE_ENTRY) continue;
-		if (entry.data?.mode === "off" || entry.data?.mode === "edits" || entry.data?.mode === "safe") return entry.data.mode;
+		if (isApprovalMode(entry.data?.mode)) return entry.data.mode;
 		if (typeof entry.data?.enabled === "boolean") return entry.data.enabled ? "edits" : "off";
 	}
 	return fallback;
@@ -75,6 +135,10 @@ function setStatus(ctx: ExtensionContext, mode: ApprovalMode): void {
 
 function persist(pi: ExtensionAPI, mode: ApprovalMode): void {
 	pi.appendEntry(STATE_ENTRY, { mode, enabled: mode !== "off", timestamp: Date.now() });
+	const settings = readDuckySettings();
+	settings.ducky = { ...settings.ducky, mode };
+	fs.mkdirSync(getAgentDir(), { recursive: true });
+	fs.writeFileSync(settingsPath(), `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 function lineCount(text: string): number {
@@ -129,6 +193,97 @@ function summarizeCommand(input: any): string {
 		timeout ? `Timeout: ${timeout}s` : undefined,
 		...formatBlock("command", command, "+"),
 	].filter((line): line is string => line !== undefined).join("\n");
+}
+
+function normalizeCommand(command: string): string {
+	return command.trim().replace(/\s+/g, " ");
+}
+
+function extractSafeCommands(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((command): command is string => typeof command === "string")
+		.map(normalizeCommand)
+		.filter(Boolean);
+}
+
+function loadConfiguredSafeCommands(): string[] {
+	try {
+		const settings = readDuckySettings();
+		return [
+			...extractSafeCommands(settings.ducky?.safeCommands),
+			...extractSafeCommands(settings.duckySafeCommands),
+		];
+	} catch {
+		return [];
+	}
+}
+
+function commandMatchesPattern(command: string, pattern: string): boolean {
+	return command === pattern || command.startsWith(`${pattern} `);
+}
+
+function isSafeCommandPart(command: string, safeCommands: readonly string[]): boolean {
+	const normalized = normalizeCommand(command);
+	if (!normalized) return true;
+	if (forbiddenSafeCommandTokens.test(normalized)) return false;
+	return safeCommands.some((safeCommand) => commandMatchesPattern(normalized, safeCommand));
+}
+
+function splitCommandParts(command: string): string[] | undefined {
+	const parts: string[] = [];
+	let start = 0;
+	let quote: "'" | '"' | undefined;
+	let escaped = false;
+
+	for (let index = 0; index < command.length; index++) {
+		const char = command[index];
+		const next = command[index + 1];
+
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (char === "\\" && quote !== "'") {
+			escaped = true;
+			continue;
+		}
+		if (quote) {
+			if (char === quote) quote = undefined;
+			else if (quote !== "'" && (char === "`" || (char === "$" && next === "("))) return undefined;
+			continue;
+		}
+		if (char === "'" || char === '"') {
+			quote = char;
+			continue;
+		}
+		if (char === "`" || (char === "$" && next === "(") || char === ";" || char === "<" || char === ">") return undefined;
+		if (char === "|") {
+			parts.push(command.slice(start, index));
+			start = index + 1;
+			continue;
+		}
+		if (char === "&") {
+			if (next !== "&") return undefined;
+			parts.push(command.slice(start, index));
+			index++;
+			start = index + 1;
+		}
+	}
+
+	if (quote) return undefined;
+	parts.push(command.slice(start));
+	return parts;
+}
+
+function isSafeCommand(input: any): boolean {
+	const command = String(input?.command ?? "");
+	const safeCommands = [...defaultSafeCommands, ...loadConfiguredSafeCommands()];
+
+	return command.split(/\n+/).every((line) => {
+		const parts = splitCommandParts(line);
+		return parts !== undefined && parts.every((part) => isSafeCommandPart(part, safeCommands));
+	});
 }
 
 function buildDigest(cwd: string, toolName: string, input: any): string | undefined {
@@ -424,6 +579,7 @@ export default function ducky(pi: ExtensionAPI): void {
 		if (approvalMode === "off") return;
 		if (event.toolName === "bash" && approvalMode !== "safe") return;
 		if (event.toolName !== "edit" && event.toolName !== "write" && event.toolName !== "bash") return;
+		if (event.toolName === "bash" && isSafeCommand(event.input)) return;
 
 		const digest = buildDigest(ctx.cwd, event.toolName, event.input);
 		if (!digest) return;
