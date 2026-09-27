@@ -2,7 +2,9 @@
 
 Hands-on collaborative AI workflow with approvals for the [Pi](https://pi.dev) coding harness.
 
-Ducky pauses every `edit` and `write` tool call, explains the proposed changes, shows the diff with inline editing, and you can either approve it, edit inline, or ask for changes. In safe mode, Ducky asks before running commands except for read-only shell commands such as directory navigation and searches.
+Ducky collaborates with you on architectural design, then explains each proposed code change, incorporating your feedback at each step.
+
+Press enter to approve, `e` to manually edit the proposed change yourself, or `r` to request changes. In safe mode, Ducky also asks before running commands except for read-only shell commands such as directory navigation and searches.
 
 Continuous planning: When Ducky is trying to make an important design decision or needs clarification, it pauses and presents you with options to discuss.
 
@@ -49,19 +51,15 @@ gpt-5.5
 
 ## Usage
 
-Ducky starts in the last mode you selected. The first run defaults to edit approvals. When the agent attempts an edit, you will see a prompt like:
+Ducky starts in the last mode you selected. The first run defaults to edit approvals. When the agent attempts an edit, use the compact review controls:
 
-```
-🦆 Adds a README section explaining the value of manual approvals before the existing Features section.                   
-
-─── ↑ 24 more ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-+ - Here's a change in the diff                                            
-+ - Another proposed change                                                                                                              
-──────────────── Yay or nay? Press enter or ask for changes ────────────────────                                           
-Your feedback: [Your Response Goes Here]
+```text
+enter approve • e edit yourself • r request changes
 ```
 
-If you approve with a note, Ducky lets the edit run and sends the note back as steering for the next step. If you reject, Ducky blocks the tool call and includes your feedback in the tool result so the agent can revise.
+If you request changes, Ducky blocks the tool call and includes your feedback in the tool result so the agent can revise.
+
+Edit mode allows you to make manual changes to the proposed code in a text editor view without using more tokens.
 
 ## Settings
 
@@ -100,8 +98,8 @@ The question opens in an editor with context and optional choices. Fill in the `
 
 ```text
 /ducky status   Show current mode
-/ducky on       Approve edits and writes
-/ducky safe     Approve edits, writes, and commands
+/ducky on       Review edits and writes
+/ducky safe     Review edits, writes, and commands
 /ducky off      Disable approval prompts for this session
 ```
 
@@ -118,5 +116,5 @@ This project is source-available under the terms in [LICENSE](LICENSE). You may 
 ## Notes
 
 - In non-interactive modes with no UI, Ducky blocks `edit`/`write` calls by default because it cannot ask for approval. Commands are also blocked when safe mode is active unless they match a safe command.
-- Ducky does not intercept read-only tools.
-- Ducky intentionally favors smaller edits. Large edits are shown in a scrollable approval editor so you can review the full change.
+- Ducky does not intercept common read-only tools or those included in your safe list in pi config.
+- Ducky intentionally favors small, incremental edit.

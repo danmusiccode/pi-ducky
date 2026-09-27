@@ -12,6 +12,8 @@ type Decision =
 	| { action: "cancel"; feedback?: string };
 
 type ApprovalMode = "off" | "edits" | "safe";
+type ApprovalPromptAction = "approve" | "edit" | "request";
+type EditModeResult = "approved" | "back";
 
 interface DuckyState {
 	enabled?: boolean;
@@ -117,8 +119,8 @@ function restoreMode(ctx: ExtensionContext, fallback: ApprovalMode): ApprovalMod
 }
 
 function modeLabel(mode: ApprovalMode): string {
-	if (mode === "edits") return "approve edits";
-	if (mode === "safe") return "approve edits & commands";
+	if (mode === "edits") return "review edits";
+	if (mode === "safe") return "review edits & commands";
 	return "approval off";
 }
 
@@ -398,24 +400,119 @@ async function explainChange(ctx: ExtensionContext, toolName: string, digest: st
 	}
 }
 
-async function askForApproval(ctx: ExtensionContext, toolName: string, digest: string): Promise<Decision> {
+function truncatePlain(text: string, width: number): string {
+	if (width <= 1) return "";
+	return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`;
+}
+
+function wrapPlain(text: string, width: number): string[] {
+	if (width <= 1) return [""];
+	const lines: string[] = [];
+	for (const paragraph of text.split(/\r?\n/)) {
+		if (paragraph.length === 0) {
+			lines.push("");
+			continue;
+		}
+		for (let start = 0; start < paragraph.length; start += width) {
+			lines.push(paragraph.slice(start, start + width));
+		}
+	}
+	return lines;
+}
+
+async function chooseApprovalAction(ctx: ExtensionContext, explanation: string): Promise<ApprovalPromptAction> {
+	return ctx.ui.custom<ApprovalPromptAction>((tui, _theme, _keybindings, done) => ({
+		render(width) {
+			return [
+				`🦆 ${explanation}`,
+				"",
+				"enter approve • e edit yourself • r request changes",
+			].map((line) => truncatePlain(line, width));
+		},
+		handleInput(data) {
+			if (data === "\r" || data === "\n") done("approve");
+			else if (data === "e" || data === "E") done("edit");
+			else if (data === "r" || data === "R") done("request");
+			tui.requestRender();
+		},
+		invalidate() {},
+	}));
+}
+
+async function askForRequestChanges(ctx: ExtensionContext): Promise<string> {
+	return ctx.ui.custom<string>((tui, _theme, _keybindings, done) => {
+		let value = "";
+		return {
+			render(width) {
+				return [
+					"How should we change the approach?",
+					...wrapPlain(`> ${value}`, width),
+				];
+			},
+			handleInput(data) {
+				if (data === "\r" || data === "\n") done(value.trim());
+				else if (data === "\u007f" || data === "\b") value = value.slice(0, -1);
+				else if (data >= " " && data !== "\u007f") value += data;
+				tui.requestRender();
+			},
+			invalidate() {},
+		};
+	});
+}
+
+function editableProposal(toolName: string, input: any, digest: string): { prefill: string; apply?: (text: string) => void } {
+	if (toolName === "write") {
+		return {
+			prefill: String(input?.content ?? ""),
+			apply: (text) => { input.content = text; },
+		};
+	}
+
+	if (toolName === "edit") {
+		const edits = Array.isArray(input?.edits) ? input.edits as EditReplacement[] : [];
+		if (edits.length === 1) {
+			return {
+				prefill: String(edits[0]?.newText ?? ""),
+				apply: (text) => { edits[0]!.newText = text; },
+			};
+		}
+	}
+
+	if (toolName === "bash") {
+		return {
+			prefill: String(input?.command ?? ""),
+			apply: (text) => { input.command = text; },
+		};
+	}
+
+	return { prefill: digest };
+}
+
+async function openEditMode(ctx: ExtensionContext, explanation: string, toolName: string, digest: string, input: any): Promise<EditModeResult> {
+	const proposal = editableProposal(toolName, input, digest);
+	const edited = await ctx.ui.editor(`🦆 ${explanation}`, proposal.prefill);
+	if (edited === undefined) return "back";
+	proposal.apply?.(edited);
+	return "approved";
+}
+
+async function askForApproval(ctx: ExtensionContext, toolName: string, digest: string, input: any): Promise<Decision> {
 	if (!ctx.hasUI) {
 		return { action: "deny", feedback: "Ducky requires interactive approval, but this Pi mode has no UI." };
 	}
 
 	const explanation = await explainChange(ctx, toolName, digest);
-	const reviewDocument = [
-		"Ducky wants to make the following change:",
-		`🦆 ${explanation}`,
-		"",
-		"──────────────── proposed change ────────────────",
-		digest,
-		"──────────────── Yay or nay? Press enter or ask for changes ────────────────────",
-		"Your feedback: ",
-	].join("\n");
+	while (true) {
+		const action = await chooseApprovalAction(ctx, explanation);
+		if (action === "approve") return { action: "approve" };
+		if (action === "request") {
+			const feedback = await askForRequestChanges(ctx);
+			return feedback ? { action: "deny", feedback } : { action: "deny", feedback: "User requested changes without entering details." };
+		}
 
-	const reply = await ctx.ui.editor(`🦆 ${explanation}`, reviewDocument);
-	return parseApprovalDocument(reply);
+		const result = await openEditMode(ctx, explanation, toolName, digest, input);
+		if (result === "approved") return { action: "approve" };
+	}
 }
 
 function commandSummary(digest: string): string {
@@ -449,24 +546,23 @@ async function explainCommand(ctx: ExtensionContext, digest: string): Promise<st
 	}
 }
 
-async function askForCommandApproval(ctx: ExtensionContext, digest: string): Promise<Decision> {
+async function askForCommandApproval(ctx: ExtensionContext, digest: string, input: any): Promise<Decision> {
 	if (!ctx.hasUI) {
 		return { action: "deny", feedback: "Ducky requires interactive approval, but this Pi mode has no UI." };
 	}
 
 	const explanation = await explainCommand(ctx, digest);
-	const reviewDocument = [
-		"Ducky wants to run the following command:",
-		`🦆 ${explanation}`,
-		"",
-		"──────────────── proposed command ────────────────",
-		digest,
-		"──────────────── Yay or nay? Press enter or ask for changes ────────────────────",
-		"Your feedback: ",
-	].join("\n");
+	while (true) {
+		const action = await chooseApprovalAction(ctx, explanation);
+		if (action === "approve") return { action: "approve" };
+		if (action === "request") {
+			const feedback = await askForRequestChanges(ctx);
+			return feedback ? { action: "deny", feedback } : { action: "deny", feedback: "User requested changes without entering details." };
+		}
 
-	const reply = await ctx.ui.editor(`🦆 ${explanation}`, reviewDocument);
-	return parseApprovalDocument(reply);
+		const result = await openEditMode(ctx, explanation, "bash", digest, input);
+		if (result === "approved") return { action: "approve" };
+	}
 }
 
 async function askRubberDucky(ctx: ExtensionContext, params: AskUserInput): Promise<string> {
@@ -571,7 +667,7 @@ export default function ducky(pi: ExtensionAPI): void {
 		return {
 			systemPrompt:
 				event.systemPrompt +
-				"\n\n[DUCKY ACTIVE] The user wants to stay actively at the wheel. Prefer small, digestible edit/write calls. Group closely related changes, but avoid large sweeping rewrites unless explicitly requested. If an edit is denied, use the user's feedback from the blocked tool result to revise the next attempt. Never use Python or other scripts as a workaround when the user rejects proposed changes. Instead, work through the changes with the user. Don't include code comments; instead use good design to make the code self-explanatory. When you are unsure about what the user wants or you are weighing a meaningful design decision, do not silently decide in your thinking. Pause and call ducky_ask_user with a concise question, short context, and concrete options when possible. Examples of when to ask: choosing CDN vs npm dependency, picking an architecture, deciding whether to preserve backward compatibility, changing user-facing behavior, or interpreting vague requirements.",
+				"\n\n[DUCKY ACTIVE] The user wants to stay actively at the wheel. Propose edits to each file in small, logical batches that are reviewable without scrolling, roughly half a monitor's height at a time. Do not batch every planned change to one file into one tool call; make one digestible change, wait for approval, then continue. Group only closely related changes, and avoid large sweeping rewrites unless explicitly requested. If an edit is denied, use the user's feedback from the blocked tool result to revise the next attempt. Never use Python or other scripts as a workaround when the user rejects proposed changes. Instead, work through the changes with the user. Don't include code comments; instead use good design to make the code self-explanatory. When you are unsure about what the user wants or you are weighing a meaningful design decision, do not silently decide in your thinking. Pause and call ducky_ask_user with a concise question, short context, and concrete options when possible. Examples of when to ask: choosing CDN vs npm dependency, picking an architecture, deciding whether to preserve backward compatibility, changing user-facing behavior, or interpreting vague requirements.",
 		};
 	});
 
@@ -585,8 +681,8 @@ export default function ducky(pi: ExtensionAPI): void {
 		if (!digest) return;
 
 		const decision = event.toolName === "bash"
-			? await askForCommandApproval(ctx, digest)
-			: await askForApproval(ctx, event.toolName, digest);
+			? await askForCommandApproval(ctx, digest, event.input)
+			: await askForApproval(ctx, event.toolName, digest, event.input);
 		if (decision.action === "approve") {
 			if (decision.note) {
 				pi.sendUserMessage(`Ducky approval note for the next step: ${decision.note}`, { deliverAs: "steer" });
