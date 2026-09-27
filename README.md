@@ -45,9 +45,11 @@ Pi will add the package to `.pi/settings.json` for that project.
 * pi-web-search
 * pi-codex-goal
 
-## Recommended Model
+## Recommended Models
 
-gpt-5.5
+gpt-5.5 (US) via OpenAI API
+
+GLM 5.2 (CN model, US hosted) via Fireworks
 
 ## Usage
 
